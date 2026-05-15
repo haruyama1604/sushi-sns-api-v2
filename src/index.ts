@@ -19,7 +19,8 @@ db.exec(`
     views      INTEGER NOT NULL DEFAULT 0,
     user_id    TEXT    NOT NULL DEFAULT 'system',
     room       TEXT    NOT NULL DEFAULT '',
-    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    spoiler    INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS comments (
@@ -71,6 +72,9 @@ db.exec(`
   );
 `);
 
+// spoiler カラムがなければ追加（既存DBマイグレーション）
+try { db.exec("ALTER TABLE posts ADD COLUMN spoiler INTEGER NOT NULL DEFAULT 0"); } catch {}
+
 // テーブルが空のときだけ初期データを入れる
 const postCount = (db.prepare("SELECT COUNT(*) as cnt FROM posts").get() as { cnt: number }).cnt;
 if (postCount === 0) {
@@ -121,6 +125,7 @@ app.get("/posts", (_req, res) => {
     user_id: p.user_id,
     room: p.room,
     created_at: p.created_at,
+    spoiler: p.spoiler ?? 0,
     tier: calcTier(p.likes, p.views),
   }));
   res.json(result);
@@ -128,7 +133,7 @@ app.get("/posts", (_req, res) => {
 
 // 投稿を作成
 app.post("/posts", (req, res) => {
-  const { content, user_id, room } = req.body as { content: string; user_id: string; room: string };
+  const { content, user_id, room, spoiler } = req.body as { content: string; user_id: string; room: string; spoiler?: boolean };
 
   if (!content || content.trim() === "") {
     res.status(400).json({ error: "content is required" });
@@ -140,8 +145,8 @@ app.post("/posts", (req, res) => {
   }
 
   const result = db.prepare(
-    "INSERT INTO posts (content, user_id, room) VALUES (?, ?, ?)"
-  ).run(content.trim(), user_id, room ?? "");
+    "INSERT INTO posts (content, user_id, room, spoiler) VALUES (?, ?, ?, ?)"
+  ).run(content.trim(), user_id, room ?? "", spoiler ? 1 : 0);
 
   const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(result.lastInsertRowid) as Post;
   res.status(201).json({ ...post, tier: calcTier(post.likes, post.views) });
