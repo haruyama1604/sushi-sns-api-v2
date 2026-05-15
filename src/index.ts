@@ -60,6 +60,15 @@ db.exec(`
     FOREIGN KEY (bucket_id) REFERENCES buckets(id),
     FOREIGN KEY (post_id)   REFERENCES posts(id)
   );
+
+  CREATE TABLE IF NOT EXISTS comment_replies (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    comment_id INTEGER NOT NULL,
+    text       TEXT    NOT NULL,
+    user_id    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (comment_id) REFERENCES comments(id)
+  );
 `);
 
 // テーブルが空のときだけ初期データを入れる
@@ -95,6 +104,7 @@ function calcTier(likes: number, views: number): string {
 type Post    = { id: number; content: string; likes: number; views: number; user_id: string; room: string; created_at: string };
 type Comment = { id: number; post_id: number; text: string; user_id: string; likes: number; created_at: string };
 type Bucket  = { id: number; name: string; user_id: string; created_at: string };
+type Reply   = { id: number; comment_id: number; text: string; user_id: string; created_at: string };
 
 // ────────────────────────────────────────
 // 投稿エンドポイント
@@ -193,6 +203,8 @@ app.delete("/posts/:id/like", (req, res) => {
 // コメント一覧
 app.get("/posts/:id/comments", (req, res) => {
   const id = Number(req.params.id);
+  const { user_id } = req.query as { user_id?: string };
+
   const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as Post | undefined;
   if (!post) { res.status(404).json({ error: "Post not found" }); return; }
 
@@ -203,6 +215,9 @@ app.get("/posts/:id/comments", (req, res) => {
     user_id: c.user_id,
     likes: c.likes,
     created_at: c.created_at,
+    liked_by_user: user_id
+      ? !!db.prepare("SELECT 1 FROM comment_likes WHERE comment_id = ? AND user_id = ?").get(c.id, user_id)
+      : false,
   })));
 });
 
@@ -239,6 +254,64 @@ app.post("/comments/:id/like", (req, res) => {
 
   const updated = db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as Comment;
   res.json({ id: updated.id, likes: updated.likes });
+});
+
+// コメントいいね取り消し
+app.delete("/comments/:id/like", (req, res) => {
+  const id = Number(req.params.id);
+  const { user_id } = req.body as { user_id: string };
+
+  const comment = db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as Comment | undefined;
+  if (!comment) { res.status(404).json({ error: "Comment not found" }); return; }
+
+  const existing = db.prepare("SELECT * FROM comment_likes WHERE comment_id = ? AND user_id = ?").get(id, user_id);
+  if (!existing) { res.status(400).json({ error: "Not liked yet" }); return; }
+
+  db.prepare("DELETE FROM comment_likes WHERE comment_id = ? AND user_id = ?").run(id, user_id);
+  db.prepare("UPDATE comments SET likes = MAX(0, likes - 1) WHERE id = ?").run(id);
+
+  const updated = db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as Comment;
+  res.json({ id: updated.id, likes: updated.likes });
+});
+
+// 返信一覧
+app.get("/comments/:id/replies", (req, res) => {
+  const id = Number(req.params.id);
+  const comment = db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as Comment | undefined;
+  if (!comment) { res.status(404).json({ error: "Comment not found" }); return; }
+
+  const replies = db.prepare("SELECT * FROM comment_replies WHERE comment_id = ? ORDER BY created_at ASC").all(id) as Reply[];
+  res.json(replies);
+});
+
+// 返信を追加
+app.post("/comments/:id/replies", (req, res) => {
+  const commentId = Number(req.params.id);
+  const { text, user_id } = req.body as { text: string; user_id: string };
+
+  const comment = db.prepare("SELECT * FROM comments WHERE id = ?").get(commentId) as Comment | undefined;
+  if (!comment) { res.status(404).json({ error: "Comment not found" }); return; }
+  if (!text || text.trim() === "") { res.status(400).json({ error: "text is required" }); return; }
+
+  const result = db.prepare(
+    "INSERT INTO comment_replies (comment_id, text, user_id) VALUES (?, ?, ?)"
+  ).run(commentId, text.trim(), user_id ?? "anonymous");
+
+  const reply = db.prepare("SELECT * FROM comment_replies WHERE id = ?").get(result.lastInsertRowid) as Reply;
+  res.status(201).json(reply);
+});
+
+// 返信を削除
+app.delete("/replies/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const { user_id } = req.body as { user_id: string };
+
+  const reply = db.prepare("SELECT * FROM comment_replies WHERE id = ?").get(id) as Reply | undefined;
+  if (!reply) { res.status(404).json({ error: "Reply not found" }); return; }
+  if (reply.user_id !== user_id) { res.status(403).json({ error: "Permission denied" }); return; }
+
+  db.prepare("DELETE FROM comment_replies WHERE id = ?").run(id);
+  res.json({ message: "deleted" });
 });
 
 // ────────────────────────────────────────
