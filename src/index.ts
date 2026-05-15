@@ -315,6 +315,20 @@ app.delete("/buckets/:id/posts/:postId", (req, res) => {
   res.json({ message: "removed" });
 });
 
+// 桶を削除
+app.delete("/buckets/:id", (req, res) => {
+  const bucketId = Number(req.params.id);
+  const { user_id } = req.body as { user_id: string };
+
+  const bucket = db.prepare("SELECT * FROM buckets WHERE id = ?").get(bucketId) as Bucket | undefined;
+  if (!bucket) { res.status(404).json({ error: "Bucket not found" }); return; }
+  if (bucket.user_id !== user_id) { res.status(403).json({ error: "Permission denied" }); return; }
+
+  db.prepare("DELETE FROM bucket_posts WHERE bucket_id = ?").run(bucketId);
+  db.prepare("DELETE FROM buckets WHERE id = ?").run(bucketId);
+  res.json({ message: "deleted" });
+});
+
 // ────────────────────────────────────────
 // サーバー起動
 // ────────────────────────────────────────
