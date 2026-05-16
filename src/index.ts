@@ -143,16 +143,35 @@ app.post("/posts", async (req, res) => {
 
 // 投稿を削除
 app.delete("/posts/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { user_id } = req.body as { user_id: string };
+  try {
+    const id = Number(req.params.id);
+    const { user_id } = req.body as { user_id: string };
 
-  const { rows } = await db.execute({ sql: "SELECT * FROM posts WHERE id = ?", args: [id] });
-  const post = rows[0] as unknown as Post | undefined;
-  if (!post) { res.status(404).json({ error: "Post not found" }); return; }
-  if (post.user_id !== user_id) { res.status(403).json({ error: "Permission denied" }); return; }
+    const { rows } = await db.execute({ sql: "SELECT * FROM posts WHERE id = ?", args: [id] });
+    const post = rows[0] as unknown as Post | undefined;
+    if (!post) { res.status(404).json({ error: "Post not found" }); return; }
+    if (post.user_id !== user_id) { res.status(403).json({ error: "Permission denied" }); return; }
 
-  await db.execute({ sql: "DELETE FROM posts WHERE id = ?", args: [id] });
-  res.json({ message: "deleted" });
+    // 関連データをカスケード削除
+    const { rows: commentRows } = await db.execute({ sql: "SELECT id FROM comments WHERE post_id = ?", args: [id] });
+    for (const c of commentRows) {
+      await db.batch([
+        { sql: "DELETE FROM comment_likes WHERE comment_id = ?", args: [c.id] },
+        { sql: "DELETE FROM comment_replies WHERE comment_id = ?", args: [c.id] },
+      ], "write");
+    }
+    await db.batch([
+      { sql: "DELETE FROM comments WHERE post_id = ?", args: [id] },
+      { sql: "DELETE FROM post_likes WHERE post_id = ?", args: [id] },
+      { sql: "DELETE FROM bucket_posts WHERE post_id = ?", args: [id] },
+      { sql: "DELETE FROM posts WHERE id = ?", args: [id] },
+    ], "write");
+
+    res.json({ message: "deleted" });
+  } catch (e) {
+    console.error("DELETE /posts/:id error:", e);
+    res.status(500).json({ error: String(e) });
+  }
 });
 
 // いいね
