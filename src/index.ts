@@ -305,6 +305,23 @@ app.post("/comments/:id/replies", async (req, res) => {
 });
 
 // 返信を削除
+app.delete("/comments/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const { user_id } = req.body as { user_id: string };
+
+  const { rows } = await db.execute({ sql: "SELECT * FROM comments WHERE id = ?", args: [id] });
+  const comment = rows[0] as unknown as Comment | undefined;
+  if (!comment) { res.status(404).json({ error: "Comment not found" }); return; }
+  if (comment.user_id !== user_id) { res.status(403).json({ error: "Permission denied" }); return; }
+
+  await db.batch([
+    { sql: "DELETE FROM comment_likes WHERE comment_id = ?", args: [id] },
+    { sql: "DELETE FROM comment_replies WHERE comment_id = ?", args: [id] },
+    { sql: "DELETE FROM comments WHERE id = ?", args: [id] },
+  ], "write");
+  res.json({ message: "deleted" });
+});
+
 app.delete("/replies/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { user_id } = req.body as { user_id: string };
