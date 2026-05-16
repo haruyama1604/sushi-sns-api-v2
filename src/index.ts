@@ -110,6 +110,14 @@ async function initDb() {
 // 投稿エンドポイント
 // ────────────────────────────────────────
 
+// ユーザーがいいねした投稿ID一覧
+app.get("/posts/liked", async (req, res) => {
+  const { user_id } = req.query as { user_id: string };
+  if (!user_id) { res.status(400).json({ error: "user_id is required" }); return; }
+  const { rows } = await db.execute({ sql: "SELECT post_id FROM post_likes WHERE user_id = ?", args: [user_id] });
+  res.json(rows.map((r) => Number(r.post_id)));
+});
+
 // 投稿一覧
 app.get("/posts", async (_req, res) => {
   const { rows } = await db.execute("SELECT * FROM posts ORDER BY created_at DESC");
